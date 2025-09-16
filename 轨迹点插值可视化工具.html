@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>轨迹点插值可视化工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjs@12.4.2/lib/browser/math.min.js"></script>
+    
+    <!-- Tailwind 配置 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',     // 主色调：蓝色
+                        original: '#EF4444',    // 原始数据点：红色
+                        linear: '#10B981',      // 线性插值：绿色
+                        spline: '#8B5CF6',      // 样条插值：紫色
+                    },
+                }
+            }
+        }
+    </script>
+    
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .card-shadow {
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            }
+            .transition-all-300 {
+                transition: all 0.3s ease;
+            }
+            .btn-hover {
+                transition: all 0.3s ease;
+            }
+            .btn-hover:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            }
+            .input-focus:focus {
+                border-color: #3B82F6;
+                box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+                outline: none;
+            }
+            .fade-in {
+                animation: fadeIn 0.5s ease-out forwards;
+            }
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans text-gray-800 min-h-screen">
+    <!-- 顶部导航 -->
+    <header class="bg-white shadow-sm sticky top-0 z-50">
+        <div class="container mx-auto px-4 md:px-6 py-4">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div class="flex items-center">
+                    <i class="fa fa-random text-primary text-2xl mr-3"></i>
+                    <h1 class="text-xl md:text-2xl font-bold">轨迹点插值可视化工具</h1>
+                    <span class="ml-3 text-sm bg-primary/10 text-primary px-3 py-1 rounded-full">线性与样条插值</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 md:px-6 py-8">
+        <div class="grid md:grid-cols-3 gap-8">
+            <!-- 左侧控制面板 -->
+            <div class="md:col-span-1 space-y-6">
+                <!-- 数据输入 -->
+                <div class="bg-white rounded-xl p-5 card-shadow">
+                    <h3 class="font-semibold text-lg mb-4 flex items-center">
+                        <i class="fa fa-database text-primary mr-2"></i>
+                        数据输入
+                    </h3>
+                    
+                    <!-- 上传区域 -->
+                    <div id="dropArea" class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-primary transition-all-300 cursor-pointer mb-4">
+                        <i class="fa fa-cloud-upload text-3xl text-gray-400 mb-3"></i>
+                        <p class="text-gray-600 mb-2">拖放CSV文件到此处或<span class="text-primary font-medium">点击上传</span></p>
+                        <p class="text-xs text-gray-500">CSV格式：时间(t),X坐标(x),Y坐标(y)</p>
+                        <input type="file" id="fileInput" accept=".csv" class="hidden">
+                    </div>
+                    
+                    <!-- 文件信息 -->
+                    <div id="fileInfo" class="hidden p-3 bg-green-50 border border-green-200 rounded-lg mb-4">
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center">
+                                <i class="fa fa-check-circle text-green-500 mr-2"></i>
+                                <span id="fileName" class="text-sm font-medium"></span>
+                            </div>
+                            <button id="removeFileBtn" class="text-gray-400 hover:text-red-500 transition-all-300">
+                                <i class="fa fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 生成示例数据 -->
+                    <button id="generateDataBtn" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 px-4 rounded-lg flex items-center justify-center btn-hover">
+                        <i class="fa fa-random mr-2"></i>
+                        生成稀疏轨迹示例
+                    </button>
+                </div>
+                
+                <!-- 插值参数 -->
+                <div class="bg-white rounded-xl p-5 card-shadow">
+                    <h3 class="font-semibold text-lg mb-4 flex items-center">
+                        <i class="fa fa-sliders text-primary mr-2"></i>
+                        插值参数设置
+                    </h3>
+                    
+                    <div class="space-y-5">
+                        <!-- 插值方法选择 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                插值方法
+                            </label>
+                            <div class="grid grid-cols-2 gap-3">
+                                <button id="linearMethodBtn" class="py-2 px-3 rounded-lg bg-linear text-white flex items-center justify-center btn-hover">
+                                    <i class="fa fa-line-chart mr-2"></i>线性插值
+                                </button>
+                                <button id="splineMethodBtn" class="py-2 px-3 rounded-lg bg-gray-100 text-gray-700 flex items-center justify-center btn-hover">
+                                    <i class="fa fa-area-chart mr-2"></i>样条插值
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- 插值密度 -->
+                        <div>
+                            <label for="interpolationDensity" class="block text-sm font-medium text-gray-700 mb-2">
+                                插值密度
+                            </label>
+                            <div class="flex items-center gap-4">
+                                <input type="range" id="interpolationDensity" min="2" max="50" value="10" step="1"
+                                    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary">
+                                <span id="densityValue" class="min-w-[40px] text-center font-medium text-primary">10</span>
+                            </div>
+                        </div>
+                        
+                        <!-- 样条插值平滑度 -->
+                        <div id="splineTensionContainer" class="hidden">
+                            <label for="splineTension" class="block text-sm font-medium text-gray-700 mb-2">
+                                样条平滑度
+                            </label>
+                            <div class="flex items-center gap-4">
+                                <input type="range" id="splineTension" min="0" max="1" value="0.5" step="0.1"
+                                    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-spline">
+                                <span id="tensionValue" class="min-w-[40px] text-center font-medium text-spline">0.5</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 操作按钮 -->
+                <div class="bg-white rounded-xl p-5 card-shadow">
+                    <h3 class="font-semibold text-lg mb-4 flex items-center">
+                        <i class="fa fa-cog text-primary mr-2"></i>
+                        操作控制
+                    </h3>
+                    
+                    <div class="space-y-3">
+                        <button id="interpolateBtn" class="w-full bg-primary hover:bg-primary/90 text-white py-3 px-4 rounded-lg flex items-center justify-center btn-hover disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                            <i class="fa fa-magic mr-2"></i>
+                            执行轨迹插值
+                        </button>
+                        
+                        <button id="compareBtn" class="w-full bg-gray-800 hover:bg-gray-900 text-white py-3 px-4 rounded-lg flex items-center justify-center btn-hover disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                            <i class="fa fa-exchange mr-2"></i>
+                            对比两种插值方法
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 右侧可视化区域 -->
+            <div class="md:col-span-2 space-y-6">
+                <!-- 轨迹对比图 -->
+                <div class="bg-white rounded-xl p-5 card-shadow">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                        <h3 class="font-semibold text-lg flex items-center">
+                            <i class="fa fa-map text-primary mr-2"></i>
+                            轨迹插值对比
+                        </h3>
+                        <div class="flex flex-wrap gap-3 mt-2 md:mt-0">
+                            <div class="flex items-center text-sm">
+                                <span class="w-3 h-3 rounded-full bg-original mr-2"></span>
+                                <span>原始数据点</span>
+                            </div>
+                            <div class="flex items-center text-sm">
+                                <span class="w-3 h-3 rounded-full bg-linear mr-2"></span>
+                                <span>线性插值</span>
+                            </div>
+                            <div class="flex items-center text-sm">
+                                <span class="w-3 h-3 rounded-full bg-spline mr-2"></span>
+                                <span>样条插值</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="h-[450px] border border-gray-200 rounded-lg overflow-hidden">
+                        <div id="noDataState" class="w-full h-full flex flex-col items-center justify-center text-center p-6">
+                            <i class="fa fa-map-o text-5xl text-gray-300 mb-4"></i>
+                            <p class="text-gray-500 mb-2">请上传数据或生成示例轨迹</p>
+                            <p class="text-gray-400 text-sm">然后点击"执行轨迹插值"按钮查看结果</p>
+                        </div>
+                        <canvas id="trajectoryChart" class="w-full h-full hidden"></canvas>
+                    </div>
+                </div>
+                
+                <!-- X轴插值对比 -->
+                <div class="bg-white rounded-xl p-5 card-shadow">
+                    <h3 class="font-semibold text-lg mb-4 flex items-center">
+                        <i class="fa fa-area-chart text-primary mr-2"></i>
+                        X坐标插值对比（随时间变化）
+                    </h3>
+                    
+                    <div class="h-[300px] border border-gray-200 rounded-lg overflow-hidden">
+                        <div id="noXDataState" class="w-full h-full flex flex-col items-center justify-center text-center p-6">
+                            <i class="fa fa-bar-chart text-4xl text-gray-300 mb-4"></i>
+                            <p class="text-gray-500">执行插值后将显示X坐标插值对比</p>
+                        </div>
+                        <canvas id="xComparisonChart" class="w-full h-full hidden"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Y轴插值对比 -->
+                <div class="bg-white rounded-xl p-5 card-shadow">
+                    <h3 class="font-semibold text-lg mb-4 flex items-center">
+                        <i class="fa fa-area-chart text-primary mr-2"></i>
+                        Y坐标插值对比（随时间变化）
+                    </h3>
+                    
+                    <div class="h-[300px] border border-gray-200 rounded-lg overflow-hidden">
+                        <div id="noYDataState" class="w-full h-full flex flex-col items-center justify-center text-center p-6">
+                            <i class="fa fa-bar-chart text-4xl text-gray-300 mb-4"></i>
+                            <p class="text-gray-500">执行插值后将显示Y坐标插值对比</p>
+                        </div>
+                        <canvas id="yComparisonChart" class="w-full h-full hidden"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="notification" class="fixed bottom-6 right-6 px-6 py-3 rounded-lg shadow-lg transform translate-y-20 opacity-0 transition-all duration-300 flex items-center z-50">
+        <i id="notificationIcon" class="mr-2"></i>
+        <span id="notificationMessage"></span>
+    </div>
+
+    <script>
+        // 全局应用状态
+        const appState = {
+            originalData: null,
+            linearInterpolated: null,
+            splineInterpolated: null,
+            currentMethod: 'linear', // 默认线性插值
+            trajectoryChart: null,
+            xComparisonChart: null,
+            yComparisonChart: null
+        };
+
+        // DOM加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            initEventListeners();
+        });
+
+        // 初始化所有事件监听器
+        function initEventListeners() {
+            // 插值密度控制
+            const densitySlider = document.getElementById('interpolationDensity');
+            const densityValue = document.getElementById('densityValue');
+            densitySlider.addEventListener('input', () => {
+                densityValue.textContent = densitySlider.value;
+            });
+
+            // 样条平滑度控制
+            const tensionSlider = document.getElementById('splineTension');
+            const tensionValue = document.getElementById('tensionValue');
+            tensionSlider.addEventListener('input', () => {
+                tensionValue.textContent = tensionSlider.value;
+            });
+
+            // 插值方法选择
+            document.getElementById('linearMethodBtn').addEventListener('click', () => {
+                appState.currentMethod = 'linear';
+                document.getElementById('linearMethodBtn').className = 'py-2 px-3 rounded-lg bg-linear text-white flex items-center justify-center btn-hover';
+                document.getElementById('splineMethodBtn').className = 'py-2 px-3 rounded-lg bg-gray-100 text-gray-700 flex items-center justify-center btn-hover';
+                document.getElementById('splineTensionContainer').classList.add('hidden');
+            });
+
+            document.getElementById('splineMethodBtn').addEventListener('click', () => {
+                appState.currentMethod = 'spline';
+                document.getElementById('linearMethodBtn').className = 'py-2 px-3 rounded-lg bg-gray-100 text-gray-700 flex items-center justify-center btn-hover';
+                document.getElementById('splineMethodBtn').className = 'py-2 px-3 rounded-lg bg-spline text-white flex items-center justify-center btn-hover';
+                document.getElementById('splineTensionContainer').classList.remove('hidden');
+            });
+
+            // 文件上传区域
+            const dropArea = document.getElementById('dropArea');
+            const fileInput = document.getElementById('fileInput');
+            
+            dropArea.addEventListener('click', () => fileInput.click());
+
+            dropArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropArea.classList.add('border-primary');
+            });
+
+            dropArea.addEventListener('dragleave', () => {
+                dropArea.classList.remove('border-primary');
+            });
+
+            dropArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropArea.classList.remove('border-primary');
+                
+                if (e.dataTransfer.files.length) {
+                    handleFileUpload(e.dataTransfer.files[0]);
+                }
+            });
+
+            // 文件选择事件
+            fileInput.addEventListener('change', () => {
+                if (fileInput.files.length) {
+                    handleFileUpload(fileInput.files[0]);
+                }
+            });
+
+            // 移除文件按钮
+            document.getElementById('removeFileBtn').addEventListener('click', resetData);
+
+            // 生成示例数据
+            document.getElementById('generateDataBtn').addEventListener('click', generateSampleData);
+
+            // 执行插值按钮
+            document.getElementById('interpolateBtn').addEventListener('click', performInterpolation);
+
+            // 对比按钮
+            document.getElementById('compareBtn').addEventListener('click', compareMethods);
+        }
+
+        // 生成示例数据 - 确保时间值正确递增
+        function generateSampleData() {
+            const pointCount = 6;
+            const data = [];
+            let t = 0;
+            
+            // 生成一个简单的轨迹，确保时间值正确递增
+            for (let i = 0; i < pointCount; i++) {
+                t += 10; // 时间每次增加10个单位
+                const angle = (i / (pointCount - 1)) * Math.PI * 1.5;
+                const radius = 50;
+                
+                data.push({
+                    t: t,
+                    x: radius * Math.cos(angle),
+                    y: radius * Math.sin(angle)
+                });
+            }
+            
+            appState.originalData = data;
+            
+            // 更新UI
+            document.getElementById('fileName').textContent = `示例轨迹数据 (${pointCount}个点)`;
+            document.getElementById('fileInfo').classList.remove('hidden');
+            document.getElementById('interpolateBtn').disabled = false;
+            document.getElementById('compareBtn').disabled = false;
+            
+            resetCharts();
+            showNotification('已生成稀疏轨迹示例数据');
+        }
+
+        // 处理文件上传
+        function handleFileUpload(file) {
+            if (!file.name.endsWith('.csv')) {
+                showNotification('请上传CSV格式的文件', true);
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = parseCSV(e.target.result);
+                    
+                    if (data.length < 2) {
+                        showNotification('数据点太少，至少需要2个点才能进行插值', true);
+                        return;
+                    }
+                    
+                    appState.originalData = data;
+                    
+                    document.getElementById('fileName').textContent = `${file.name} (${data.length}个点)`;
+                    document.getElementById('fileInfo').classList.remove('hidden');
+                    document.getElementById('interpolateBtn').disabled = false;
+                    document.getElementById('compareBtn').disabled = false;
+                    
+                    resetCharts();
+                    showNotification(`文件上传成功，包含 ${data.length} 个数据点`);
+                } catch (error) {
+                    showNotification(`文件解析错误: ${error.message}`, true);
+                    console.error(error);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // 解析CSV数据
+        function parseCSV(csvText) {
+            const lines = csvText.split('\n');
+            const data = [];
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (line === '') continue;
+                
+                const parts = line.split(',').map(part => part.trim());
+                
+                if (parts.length >= 3) {
+                    const t = parseFloat(parts[0]);
+                    const x = parseFloat(parts[1]);
+                    const y = parseFloat(parts[2]);
+                    
+                    if (!isNaN(t) && !isNaN(x) && !isNaN(y)) {
+                        data.push({ t, x, y });
+                    } else {
+                        throw new Error(`第 ${i+1} 行包含无效数值`);
+                    }
+                } else {
+                    throw new Error(`第 ${i+1} 行格式不正确，需要至少3列数据`);
+                }
+            }
+            
+            // 按时间排序
+            data.sort((a, b) => a.t - b.t);
+            return data;
+        }
+
+        // 执行插值
+        function performInterpolation() {
+            if (!appState.originalData || appState.originalData.length < 2) return;
+            
+            const density = parseInt(document.getElementById('interpolationDensity').value);
+            
+            try {
+                if (appState.currentMethod === 'linear') {
+                    appState.linearInterpolated = linearInterpolation(
+                        appState.originalData, 
+                        density
+                    );
+                    showInterpolatedResults('linear');
+                } else {
+                    const tension = parseFloat(document.getElementById('splineTension').value);
+                    appState.splineInterpolated = splineInterpolation(
+                        appState.originalData, 
+                        density,
+                        tension
+                    );
+                    showInterpolatedResults('spline');
+                }
+            } catch (error) {
+                showNotification(`插值计算错误: ${error.message}`, true);
+                console.error('插值错误:', error);
+            }
+        }
+
+        // 线性插值算法
+        function linearInterpolation(originalData, pointsPerSegment) {
+            const interpolated = [];
+            
+            // 对每对相邻点进行插值
+            for (let i = 0; i < originalData.length - 1; i++) {
+                const p1 = originalData[i];
+                const p2 = originalData[i + 1];
+                
+                // 添加起始点
+                if (i === 0) {
+                    interpolated.push({...p1, isInterpolated: false});
+                }
+                
+                // 计算步长
+                const tDiff = p2.t - p1.t;
+                const xDiff = p2.x - p1.x;
+                const yDiff = p2.y - p1.y;
+                const step = 1 / (pointsPerSegment + 1);
+                
+                // 生成插值点
+                for (let j = 1; j <= pointsPerSegment; j++) {
+                    const ratio = step * j;
+                    interpolated.push({
+                        t: p1.t + tDiff * ratio,
+                        x: p1.x + xDiff * ratio,
+                        y: p1.y + yDiff * ratio,
+                        isInterpolated: true
+                    });
+                }
+                
+                // 添加终点
+                if (i === originalData.length - 2) {
+                    interpolated.push({...p2, isInterpolated: false});
+                }
+            }
+            
+            return interpolated;
+        }
+
+        // 修复的样条插值算法 - 使用更稳定的实现
+        function splineInterpolation(originalData, pointsPerSegment, tension = 0.5) {
+            // 提取时间点数组
+            const t = originalData.map(p => p.t);
+            const x = originalData.map(p => p.x);
+            const y = originalData.map(p => p.y);
+            
+            // 创建三次样条插值函数
+            const splineX = createCubicSpline(t, x, tension);
+            const splineY = createCubicSpline(t, y, tension);
+            
+            const interpolated = [];
+            
+            // 对每对相邻点进行插值
+            for (let i = 0; i < originalData.length - 1; i++) {
+                const p1 = originalData[i];
+                const p2 = originalData[i + 1];
+                
+                // 添加起始点
+                if (i === 0) {
+                    interpolated.push({...p1, isInterpolated: false});
+                }
+                
+                // 生成插值点
+                const step = 1 / (pointsPerSegment + 1);
+                for (let j = 1; j <= pointsPerSegment; j++) {
+                    const ratio = step * j;
+                    const currentT = p1.t + (p2.t - p1.t) * ratio;
+                    
+                    interpolated.push({
+                        t: currentT,
+                        x: splineX(currentT),
+                        y: splineY(currentT),
+                        isInterpolated: true
+                    });
+                }
+                
+                // 添加终点
+                if (i === originalData.length - 2) {
+                    interpolated.push({...p2, isInterpolated: false});
+                }
+            }
+            
+            return interpolated;
+        }
+
+        // 手动实现三次样条插值，避免依赖mathjs的潜在问题
+        function createCubicSpline(x, y, tension = 0.5) {
+            const n = x.length;
+            const h = new Array(n - 1);
+            const alpha = new Array(n - 1);
+            const l = new Array(n);
+            const mu = new Array(n);
+            const z = new Array(n);
+            const c = new Array(n);
+            const b = new Array(n - 1);
+            const d = new Array(n - 1);
+            
+            // 计算h数组
+            for (let i = 0; i < n - 1; i++) {
+                h[i] = x[i + 1] - x[i];
+            }
+            
+            // 计算alpha数组
+            for (let i = 1; i < n - 1; i++) {
+                alpha[i] = (3 / h[i]) * (y[i + 1] - y[i]) - (3 / h[i - 1]) * (y[i] - y[i - 1]);
+            }
+            
+            // 边界条件 - 自然样条
+            alpha[0] = 0;
+            alpha[n - 1] = 0;
+            l[0] = 1;
+            mu[0] = 0;
+            z[0] = 0;
+            
+            // 前向消元
+            for (let i = 1; i < n - 1; i++) {
+                l[i] = 2 * (x[i + 1] - x[i - 1]) - h[i - 1] * mu[i - 1];
+                mu[i] = h[i] / l[i];
+                z[i] = (alpha[i] - h[i - 1] * z[i - 1]) / l[i];
+            }
+            
+            // 处理最后一个点
+            l[n - 1] = 1;
+            z[n - 1] = 0;
+            c[n - 1] = 0;
+            
+            // 反向回代
+            for (let j = n - 2; j >= 0; j--) {
+                c[j] = z[j] - mu[j] * c[j + 1];
+                b[j] = (y[j + 1] - y[j]) / h[j] - h[j] * (c[j + 1] + 2 * c[j]) / 3;
+                d[j] = (c[j + 1] - c[j]) / (3 * h[j]);
+            }
+            
+            // 返回插值函数
+            return function(t) {
+                // 找到t所在的区间
+                let i;
+                for (i = 0; i < n - 1; i++) {
+                    if (t >= x[i] && t <= x[i + 1]) {
+                        break;
+                    }
+                }
+                // 如果超出范围，使用最近的区间
+                if (i >= n - 1) i = n - 2;
+                
+                const dx = t - x[i];
+                return y[i] + b[i] * dx + c[i] * dx * dx + d[i] * dx * dx * dx;
+            };
+        }
+
+        // 对比两种插值方法
+        function compareMethods() {
+            if (!appState.originalData || appState.originalData.length < 2) return;
+            
+            const density = parseInt(document.getElementById('interpolationDensity').value);
+            const tension = parseFloat(document.getElementById('splineTension').value);
+            
+            try {
+                // 确保两种插值结果都已计算
+                if (!appState.linearInterpolated) {
+                    appState.linearInterpolated = linearInterpolation(
+                        appState.originalData, 
+                        density
+                    );
+                }
+                
+                if (!appState.splineInterpolated) {
+                    appState.splineInterpolated = splineInterpolation(
+                        appState.originalData, 
+                        density,
+                        tension
+                    );
+                }
+                
+                showComparisonResults();
+            } catch (error) {
+                showNotification(`对比计算错误: ${error.message}`, true);
+                console.error('对比错误:', error);
+            }
+        }
+
+        // 显示插值结果
+        function showInterpolatedResults(method) {
+            // 隐藏无数据状态，显示图表
+            document.getElementById('noDataState').classList.add('hidden');
+            document.getElementById('trajectoryChart').classList.remove('hidden');
+            document.getElementById('noXDataState').classList.add('hidden');
+            document.getElementById('xComparisonChart').classList.remove('hidden');
+            document.getElementById('noYDataState').classList.add('hidden');
+            document.getElementById('yComparisonChart').classList.remove('hidden');
+            
+            // 获取当前插值数据
+            const interpolatedData = method === 'linear' 
+                ? appState.linearInterpolated 
+                : appState.splineInterpolated;
+            
+            // 绘制轨迹图
+            drawTrajectoryChart([{
+                data: interpolatedData,
+                color: method === 'linear' ? '#10B981' : '#8B5CF6',
+                label: method === 'linear' ? '线性插值' : '样条插值'
+            }]);
+            
+            // 绘制X和Y轴对比图
+            drawAxisComparisonCharts([{
+                data: interpolatedData,
+                color: method === 'linear' ? '#10B981' : '#8B5CF6',
+                label: method === 'linear' ? '线性插值' : '样条插值'
+            }]);
+            
+            showNotification(`${method === 'linear' ? '线性' : '样条'}插值完成`);
+        }
+
+        // 显示两种方法的对比结果
+        function showComparisonResults() {
+            // 隐藏无数据状态，显示图表
+            document.getElementById('noDataState').classList.add('hidden');
+            document.getElementById('trajectoryChart').classList.remove('hidden');
+            document.getElementById('noXDataState').classList.add('hidden');
+            document.getElementById('xComparisonChart').classList.remove('hidden');
+            document.getElementById('noYDataState').classList.add('hidden');
+            document.getElementById('yComparisonChart').classList.remove('hidden');
+            
+            // 绘制轨迹图
+            drawTrajectoryChart([
+                {
+                    data: appState.linearInterpolated,
+                    color: '#10B981',
+                    label: '线性插值'
+                },
+                {
+                    data: appState.splineInterpolated,
+                    color: '#8B5CF6',
+                    label: '样条插值'
+                }
+            ]);
+            
+            // 绘制X和Y轴对比图
+            drawAxisComparisonCharts([
+                {
+                    data: appState.linearInterpolated,
+                    color: '#10B981',
+                    label: '线性插值'
+                },
+                {
+                    data: appState.splineInterpolated,
+                    color: '#8B5CF6',
+                    label: '样条插值'
+                }
+            ]);
+            
+            showNotification('两种插值方法对比完成');
+        }
+
+        // 绘制轨迹图
+        function drawTrajectoryChart(interpolationDatasets) {
+            const ctx = document.getElementById('trajectoryChart').getContext('2d');
+            
+            // 销毁现有图表
+            if (appState.trajectoryChart) {
+                appState.trajectoryChart.destroy();
+            }
+            
+            // 准备数据集
+            const datasets = [
+                // 原始数据点
+                {
+                    label: '原始数据点',
+                    data: appState.originalData.map(p => ({ x: p.x, y: p.y })),
+                    backgroundColor: '#EF4444',
+                    borderColor: '#EF4444',
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    showLine: false,
+                    order: 3
+                }
+            ];
+            
+            // 添加插值数据集
+            interpolationDatasets.forEach((dataset, index) => {
+                // 分离插值点和原始点
+                const interpolatedPoints = dataset.data.filter(p => p.isInterpolated);
+                
+                datasets.push({
+                    label: dataset.label,
+                    data: interpolatedPoints.map(p => ({ x: p.x, y: p.y })),
+                    borderColor: dataset.color,
+                    backgroundColor: `${dataset.color}80`,
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    showLine: true,
+                    tension: 0.1,
+                    order: index + 1
+                });
+            });
+            
+            // 创建图表
+            appState.trajectoryChart = new Chart(ctx, {
+                type: 'scatter',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'X 坐标' },
+                            grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                        },
+                        y: {
+                            title: { display: true, text: 'Y 坐标' },
+                            grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 绘制X和Y轴对比图
+        function drawAxisComparisonCharts(interpolationDatasets) {
+            // 绘制X轴对比图
+            drawAxisChart(
+                'xComparisonChart', 
+                p => p.x, 
+                'X 坐标值',
+                interpolationDatasets
+            );
+            
+            // 绘制Y轴对比图
+            drawAxisChart(
+                'yComparisonChart', 
+                p => p.y, 
+                'Y 坐标值',
+                interpolationDatasets
+            );
+        }
+
+        // 绘制单个轴的对比图
+        function drawAxisChart(canvasId, valueAccessor, axisLabel, interpolationDatasets) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            const chart = canvasId === 'xComparisonChart' ? appState.xComparisonChart : appState.yComparisonChart;
+            
+            // 销毁现有图表
+            if (chart) {
+                chart.destroy();
+            }
+            
+            // 准备数据集
+            const datasets = [
+                // 原始数据点
+                {
+                    label: '原始数据点',
+                    data: appState.originalData.map(p => ({ x: p.t, y: valueAccessor(p) })),
+                    backgroundColor: '#EF4444',
+                    borderColor: '#EF4444',
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    showLine: false,
+                    order: 3
+                }
+            ];
+            
+            // 添加插值数据集
+            interpolationDatasets.forEach((dataset, index) => {
+                datasets.push({
+                    label: dataset.label,
+                    data: dataset.data.map(p => ({ x: p.t, y: valueAccessor(p) })),
+                    borderColor: dataset.color,
+                    backgroundColor: `${dataset.color}30`,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    showLine: true,
+                    tension: 0.2,
+                    fill: false,
+                    order: index + 1
+                });
+            });
+            
+            // 创建图表
+            const newChart = new Chart(ctx, {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: { display: true, text: '时间' },
+                            type: 'linear',
+                            position: 'bottom',
+                            grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                        },
+                        y: {
+                            title: { display: true, text: axisLabel },
+                            grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                        }
+                    }
+                }
+            });
+            
+            // 保存图表实例
+            if (canvasId === 'xComparisonChart') {
+                appState.xComparisonChart = newChart;
+            } else {
+                appState.yComparisonChart = newChart;
+            }
+        }
+
+        // 重置数据
+        function resetData() {
+            appState.originalData = null;
+            appState.linearInterpolated = null;
+            appState.splineInterpolated = null;
+            
+            document.getElementById('fileInput').value = '';
+            document.getElementById('fileInfo').classList.add('hidden');
+            document.getElementById('interpolateBtn').disabled = true;
+            document.getElementById('compareBtn').disabled = true;
+            
+            resetCharts();
+        }
+
+        // 重置图表
+        function resetCharts() {
+            // 显示无数据状态
+            document.getElementById('noDataState').classList.remove('hidden');
+            document.getElementById('trajectoryChart').classList.add('hidden');
+            document.getElementById('noXDataState').classList.remove('hidden');
+            document.getElementById('xComparisonChart').classList.add('hidden');
+            document.getElementById('noYDataState').classList.remove('hidden');
+            document.getElementById('yComparisonChart').classList.add('hidden');
+            
+            // 销毁图表实例
+            if (appState.trajectoryChart) {
+                appState.trajectoryChart.destroy();
+                appState.trajectoryChart = null;
+            }
+            
+            if (appState.xComparisonChart) {
+                appState.xComparisonChart.destroy();
+                appState.xComparisonChart = null;
+            }
+            
+            if (appState.yComparisonChart) {
+                appState.yComparisonChart.destroy();
+                appState.yComparisonChart = null;
+            }
+        }
+
+        // 显示通知
+        function showNotification(message, isError = false) {
+            const notification = document.getElementById('notification');
+            const icon = document.getElementById('notificationIcon');
+            const messageEl = document.getElementById('notificationMessage');
+            
+            messageEl.textContent = message;
+            icon.className = isError 
+                ? 'fa fa-exclamation-circle text-red-500 mr-2' 
+                : 'fa fa-check-circle text-green-500 mr-2';
+            
+            notification.className = `fixed bottom-6 right-6 px-6 py-3 rounded-lg shadow-lg transform translate-y-0 opacity-100 transition-all duration-300 flex items-center z-50 ${
+                isError ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-200'
+            }`;
+            
+            // 3秒后隐藏
+            setTimeout(() => {
+                notification.className = 'fixed bottom-6 right-6 px-6 py-3 rounded-lg shadow-lg transform translate-y-20 opacity-0 transition-all duration-300 flex items-center z-50';
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
+    
